@@ -30,6 +30,9 @@ builder.Services.AddHttpClient("SpotifyTokens", client =>
 var dataDirectory = builder.Configuration["DataDirectory"]
     ?? Path.Combine(builder.Environment.ContentRootPath, "App_Data");
 Directory.CreateDirectory(dataDirectory);
+if (!OperatingSystem.IsWindows())
+    File.SetUnixFileMode(dataDirectory,
+        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 builder.Services.AddDataProtection()
     .SetApplicationName("Nowify")
     .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDirectory, "keys")));
@@ -107,7 +110,12 @@ app.MapGet("/auth/login", (IConfiguration configuration) =>
         return Results.Text("Configure Spotify:ClientId and Spotify:ClientSecret on the server first.",
             statusCode: StatusCodes.Status503ServiceUnavailable);
 
-    return Results.Challenge(new AuthenticationProperties { RedirectUri = "/" }, ["Spotify"]);
+    return Results.Challenge(new AuthenticationProperties
+    {
+        RedirectUri = "/",
+        IsPersistent = true,
+        ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30)
+    }, ["Spotify"]);
 });
 app.MapPost("/auth/logout", async (HttpContext context, SpotifyPlayerService player,
     Microsoft.AspNetCore.Antiforgery.IAntiforgery antiforgery) =>
