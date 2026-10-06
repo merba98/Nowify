@@ -1,88 +1,141 @@
-[![Netlify Status](https://api.netlify.com/api/v1/badges/2d459d5a-509d-49dc-85c1-d0168afd8465/deploy-status)](https://app.netlify.com/sites/peaceful-brahmagupta-4fa075/deploys)
-
 # Nowify
 
-A simple app to display your currently playing Spotify track on a Raspberry Pi, made with Vue.
+A Spotify "Now Playing" display for Raspberry Pi, built with **Blazor Server**
+(.NET 10, Interactive Server rendering). Spotify playback can happen on any device
+on your account; the Pi only needs a browser to display Nowify.
 
-Nowify will:
+## Features
 
-* ✅ - Use Spotify Web API to get your current track
-* ✅ - Only access that and no other data
-* ✅ - Use Access and Refresh Tokens to ensure that you're kept logged in between sessions
-* ✅ - Display the current track artist, cover, and a matching vibrant background colour
+- Album cover, track title, and comma-separated artists.
+- Responsive, full-screen layout and artwork-derived background/text colours.
+- Idle screen when playback is paused or no device session is active.
+- Spotify authorization with the `user-read-currently-playing` scope only.
+- Server-side access/refresh tokens, automatic renewal, and remembered login.
+- Sequential polling every 2.5 seconds, with rate-limit backoff and transient-error status.
+- Logout with session revocation and CSRF protection.
 
-Preview:
+Original display previews:
 ![Nowify Preview Image 1](assets/preview-1.png?raw=true "Nowify preview image, cover art for the song 'Wherever you go' by The Avalanches and Jamie xx")
 ![Nowify Preview Image 2](assets/preview-2.png?raw=true "Nowify preview image, cover art for the song 'Gas Drawls' by MF DOOM")
 ![Nowify Preview Image 3](assets/preview-3.png?raw=true "Nowify preview image, cover art for the song '有吗炒面' by Lexie Liu")
 
-Nowify needs a webserver to run. The quickest way to get up and running is to use a Jamstack platform like Netlify or GitHub Pages.
+## Local setup
 
-* Fork this repository
-* Connect your repo to your Jamstack platform
-* Add your Spotify Client ID and Client Secret to the platforms environment variables
-* Deploy!
+Install the **.NET 10 SDK**. Node, Yarn, and the Vue toolchain are no longer needed.
 
----
-# How to use
+1. Create an application in the [Spotify developer dashboard](https://developer.spotify.com/dashboard).
+2. Register `http://127.0.0.1:5267/signin-spotify` as its redirect URI.
+   The scheme, host, port, and callback path must match exactly. Use a loopback IP
+   for HTTP development; deployed non-loopback redirects require HTTPS.
+3. Configure credentials using .NET user secrets:
 
-**Prerequisites:**
-You will need:
-* A GitHub account
-* A [Netlify](https://netlify.com) account
-* Spotify Client Keys
-* A device to display Nowify
+   ```sh
+   dotnet user-secrets set "Spotify:ClientId" "YOUR_CLIENT_ID"
+   dotnet user-secrets set "Spotify:ClientSecret" "YOUR_CLIENT_SECRET"
+   ```
 
-### 1. Fork this repository
+4. Start the server:
 
-On this page, click on the 'Fork' button in the top-right to create a copy of the repo as-is on your account. Alternatively, you can clone the repo and push to GitHub.
+   ```sh
+   dotnet run --no-launch-profile --urls http://127.0.0.1:5267 --environment Development
+   ```
 
-### 2. Create a new project on Netlify
-Log in to Netlify and click 'New site from Git'.
+5. Open `http://127.0.0.1:5267`, choose **Login with Spotify**, and start playback.
 
-If you're doing this for the first time, you will need to authorise your GitHub account with Netlify by following the instructions.
+Alternatively, supply `Spotify__ClientId` and `Spotify__ClientSecret` as server
+environment variables. Do not put real credentials in `appsettings.json`, source
+control, or browser JavaScript. The old `VUE_APP_SP_*` variables are not used.
+Local `.env` files are not automatically loaded.
 
-Once authorised, follow the on-screen instructions to connect your repository. You should be fine to leave the default settings here as-is.
+## Hosting and Raspberry Pi
 
-Click on 'Deploy site'.
+**Blazor Server requires a running ASP.NET Core server and a persistent SignalR
+connection. Static hosts such as GitHub Pages or a static Netlify deployment are
+not sufficient.** Host on an ASP.NET Core-capable service, Linux server, or Pi.
+The Pi's browser may connect to a server running on another machine.
 
-_Note: Nowify should use Node 14. This has been set in the project environment. I've only ever attempted this Netlify, so cannot help you if you use another platform._
+Publish and run with the .NET 10 ASP.NET Core runtime:
 
-### 3. Create Spotify Client keys.
-To allow authorisation to your track data, you'll need to generate Spotify API keys. You can do this by logging in to the [Spotify Dashboard](https://developer.spotify.com/dashboard/applications) creating an app.
+```sh
+dotnet publish -c Release -o /tmp/nowify-publish
+dotnet /tmp/nowify-publish/Nowify.dll --urls http://127.0.0.1:5267
+```
 
-Call the application 'Nowify'.
+For a self-contained 64-bit Raspberry Pi OS deployment:
 
-Set the _Redirect URI_ as the URL of your project in Netlify. This must be set else Spotify won't authorise Nowify.
+```sh
+dotnet publish -c Release -r linux-arm64 --self-contained true -o /tmp/nowify-publish
+```
 
-**Important:** The _Redirect URI_ entered in this field must match the URL of your Netlify site exactly, or you'll receive authorisation errors. A common issue is that Spotify will automatically add a trailing slash to the URL upon saving. For example: `https://example.netlify.com` vs `https://example.netlify.com/`.
+Use `linux-arm` instead for a supported 32-bit OS. Copy the published output to
+the target and run `./Nowify`. Configure the server to start automatically with
+your host's service manager, then open its URL in the Pi browser's kiosk/full-screen mode.
+An internet connection is required for Spotify and album artwork.
 
-You can leave the other settings (Callback URL, Bundle IDs etc) blank.
+For production:
 
-Copy down the Client Secret and Client ID and save your app in the Spotify Dashboard.
+- Terminate HTTPS at a reverse proxy or configure Kestrel HTTPS. Production uses
+  secure cookies, HSTS, and HTTPS redirection.
+- Register `https://YOUR_HOST/signin-spotify` in Spotify and set `AllowedHosts`
+  to your host name. Deploy at the site root.
+- Proxy WebSockets/SignalR and forward the original scheme. Forwarded headers
+  use ASP.NET Core's default trusted loopback proxies; configure explicit
+  `KnownIPProxies`/`KnownNetworks` in `Program.cs` if the proxy is elsewhere.
+  Do not trust forwarded headers from arbitrary clients.
+- Set credentials through your host's secret manager or environment, not user
+  secrets (which are development-only).
+- Set `DataDirectory` to a persistent, private directory writable by the server
+  account. By default this is `App_Data` under the content root.
+- Use a single application instance, or sticky sessions and an appropriately
+  shared token/key directory. This implementation is intended for a small
+  dedicated display, not a distributed multi-tenant service.
 
-### 4. Add the Client ID and Client Secret to Netlify
+### Login persistence and security
 
-Now that we have our Spotify API keys, we must let Nowify know that they exist.
+The browser receives an HTTP-only authentication cookie containing a random
+session identifier, **not Spotify credentials or tokens**. Login lasts up to
+30 days, subject to Spotify revocation and cookie retention. Spotify OAuth uses
+PKCE and the framework's protected state/correlation checks.
 
-To do this, navigate to Netlify > Site Settings > Build & Deploy > Environment
+Access and refresh tokens are encrypted with ASP.NET Core Data Protection and
+stored in `App_Data/tokens`. Keys are persisted in `App_Data/keys`; on Linux,
+filesystem-persisted keys are not encrypted at rest by default. Restrict access
+to the entire data directory and use encrypted storage or a supported external
+key protector as appropriate. Keep both directories across restarts/deployments
+to retain login; losing keys or token files requires signing in again.
+Expired session files can be removed as part of routine maintenance. Logout
+deletes that session's token file. `App_Data`, build output, and local environment
+files are excluded from Git.
 
-Under _Environment variables_, add two fields. The _Keys_ can be found in the `env.sample` file and the values will be the _Client ID_ and _Client Secret_, respectively.
+If Spotify was previously configured for the Vue app, rotate the old client
+secret and clear the old `nowify_auth_state` browser storage: the previous app
+placed credentials/tokens in the browser.
 
-Hit save.
+## Architecture
 
-### 5. View Nowify
+- `Program.cs`: authentication, OAuth callback, logout, hosting, and service registration.
+- `Components/Pages/Home.razor`: login/idle/playing screens and cancellable polling.
+- `Services/SpotifyPlayerService.cs`: Spotify HTTP calls, token renewal, response
+  normalization, and error/rate-limit handling.
+- `Services/TokenStore.cs`: protected persistent server-side token storage.
+- `Models/PlaybackResult.cs`: minimal display model.
+- `wwwroot/app.css`: responsive display styling.
+- `wwwroot/nowify.js`: browser-side canvas colour extraction; no tokens or Spotify
+  API requests. Artwork failures fall back to the default colours.
 
-Once the environment variables are in, you will have to navigate to your Netlify site overview > Deploys > Trigger Deploy drop-down > click 'Clear cache and deploy site' and wait for deployment to complete. You can now navigate to your Netlify site. You'll be prompted with a Spotify login button. Do that, and you're good to go!
+## Validation
 
----
+```sh
+dotnet build
+dotnet publish -c Release
+```
 
-Alternatively, you can clone the repo, compile the code offline, and upload to your own webserver (more advanced users only). If you're considering doing this, I'll assume that you somewhat know you're way around build tools.
+There is no automated test project. With configured Spotify credentials, verify
+login, playback/track changes, pause/resume, idle playback, reload/restart
+persistence, token renewal, and logout. Browser colour extraction needs artwork
+that permits cross-origin canvas access; otherwise the default colours remain.
 
----
+## Background
 
-### Original Write up:
+Original write-up:
 [https://ashcroft.dev/blog/now-playing-screen-spotify-raspberry-pi-es6/](https://ashcroft.dev/blog/now-playing-screen-spotify-raspberry-pi-es6/)
-
-### Brief About:
-Nowify was a project that I originally made in 2017 when I wanted to learn more modern Javascript. Over the years, I've learned a lot more and had people contact me about Nowify, so I wanted to build a more modern version of it using modern tools. This is still a learning exercise, but hopefully one that's more usable. If you'd like to view the old repository, that can be found on the `old` branch.

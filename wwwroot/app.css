@@ -1,0 +1,185 @@
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    min-height: 100%;
+}
+
+body {
+    font-family: "Source Sans Pro", Helvetica, Arial, sans-serif;
+}
+
+button, a {
+    -webkit-tap-highlight-color: transparent;
+}
+
+button {
+    font: inherit;
+}
+
+a:focus-visible, button:focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 5px;
+}
+
+h1:focus {
+    outline: none;
+}
+
+.nowify-display {
+    background: var(--playing-background, #301934);
+    color: var(--playing-text, #fff);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    transition: background-color 600ms ease, color 600ms ease;
+}
+
+.display-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+}
+
+.wordmark {
+    color: inherit;
+    font-size: 1.25rem;
+    font-weight: 900;
+    text-decoration: none;
+}
+
+.session-button {
+    border: 1px solid currentColor;
+    border-radius: 2rem;
+    padding: .5rem 1rem;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.display-notice, .playback-status {
+    text-align: center;
+    line-height: 1.5;
+    padding: .75rem 1.5rem;
+    margin: 0;
+}
+
+.playback-status {
+    min-height: 3rem;
+}
+
+.now-playing, .authorise {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-flow: column nowrap;
+    padding: 1.5rem;
+}
+
+.now-playing__cover, .now-playing__details {
+    padding: 1rem;
+    text-align: center;
+    width: 100%;
+}
+
+.now-playing__cover {
+    max-width: 400px;
+}
+
+.now-playing__image, .now-playing__placeholder {
+    display: block;
+    box-shadow: 1px 1px 16px -2px rgb(0 0 0 / 30%);
+    width: 100%;
+    max-width: 60vw;
+    aspect-ratio: 1;
+    margin: auto;
+    object-fit: cover;
+}
+
+.now-playing__placeholder {
+    display: grid;
+    place-items: center;
+    font-size: 6rem;
+    background: rgb(0 0 0 / 15%);
+}
+
+h1 {
+    font-size: 2rem;
+    font-weight: 900;
+    letter-spacing: -1.25px;
+    line-height: 1.1;
+    margin: 0 0 1rem;
+    overflow-wrap: anywhere;
+}
+
+h2 {
+    font-size: 1.5rem;
+    font-weight: 400;
+    letter-spacing: -.5px;
+    line-height: 1.2;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.now-playing__artists {
+    opacity: .85;
+}
+
+.now-playing__idle-heading, .authorise {
+    text-align: center;
+}
+
+.authorise p {
+    max-width: 480px;
+    font-size: 1.2rem;
+    line-height: 1.4;
+    margin: 0 0 1.5rem;
+}
+
+.spotify-button {
+    display: inline-block;
+    border-radius: 2rem;
+    padding: 1rem 1.75rem;
+    background: #1db954;
+    color: #082410;
+    text-decoration: none;
+    font-weight: 700;
+}
+
+.blazor-error-boundary {
+    background: #b32121;
+    color: white;
+    padding: 1rem;
+}
+
+.blazor-error-boundary::after {
+    content: "An error has occurred.";
+}
+
+@media (min-width: 767px) {
+    .now-playing--active {
+        flex-direction: row;
+        padding: 5% 10%;
+    }
+
+    .now-playing__cover, .now-playing__details {
+        width: 50%;
+        max-width: 495px;
+    }
+
+    .now-playing__details {
+        text-align: left;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nowify-display {
+        transition: none;
+    }
+}
