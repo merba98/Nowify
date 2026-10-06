@@ -1,0 +1,265 @@
+@page "/"
+@using Microsoft.AspNetCore.Components.Authorization
+@using Nowify.Models
+@using Nowify.Services
+@implements IAsyncDisposable
+@inject SpotifyPlayerService Player
+@inject IJSRuntime JS
+
+<PageTitle>Nowify · Now playing</PageTitle>
+
+<main class="nowify-display" style="@PaletteStyle">
+    <header class="display-header">
+        <a class="wordmark" href="/">Nowify</a>
+        @if (_authenticated)
+        {
+            <form method="post" action="/auth/logout" data-enhance="false">
+                <AntiforgeryToken />
+                <button class="session-button" type="submit">Log out</button>
+            </form>
+        }
+    </header>
+
+    @if (string.Equals(AuthError, "true", StringComparison.OrdinalIgnoreCase))
+    {
+        <p class="display-notice" role="alert">Spotify sign-in could not be completed. Please try again.</p>
+    }
+
+    @if (!_authenticated || _requiresLogin)
+    {
+        <section class="authorise">
+            <h1>Your music, on display.</h1>
+            <p>Connect Spotify to show your currently playing song and bring its album colours to your screen.</p>
+            @if (_requiresLogin)
+            {
+                <p role="status">Your Spotify session is no longer available. Sign in again to reconnect.</p>
+            }
+            <a class="spotify-button" href="/auth/login" data-enhance-nav="false">Sign in with Spotify</a>
+        </section>
+    }
+    else
+    {
+        <section class="now-playing @(_track is null ? "now-playing--idle" : "now-playing--active")" aria-label="Now playing">
+            @if (_track is not null)
+            {
+                <div class="now-playing__cover">
+                    @if (ImageUrl is not null && !_imageFailed)
+                    {
+                        <img class="now-playing__image" src="@ImageUrl" alt="@($"Album cover for {_track.Album}")" @onerror="OnImageError" />
+                    }
+                    else
+                    {
+                        <div class="now-playing__placeholder" role="img" aria-label="Album artwork unavailable">♫</div>
+                    }
+                </div>
+                <div class="now-playing__details" aria-live="polite" aria-atomic="true">
+                    <h1 class="now-playing__track">@_track.Title</h1>
+                    <h2 class="now-playing__artists">@string.Join(", ", _track.Artists)</h2>
+                </div>
+            }
+            else
+            {
+                <h1 class="now-playing__idle-heading">@(_loading ? "Checking what’s playing…" : "No music is playing 😔")</h1>
+            }
+        </section>
+        <p class="playback-status" role="status">@_status</p>
+    }
+</main>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
+    [SupplyParameterFromQuery(Name = "authError")]
+    public string? AuthError { get; set; }
+
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task? _pollTask;
+    private Task<IJSObjectReference>? _moduleTask;
+    private NowPlayingTrack? _track;
+    private string? _sessionId;
+    private bool _authenticated;
+    private bool _requiresLogin;
+    private bool _loading = true;
+    private bool _disposed;
+    private bool _imageFailed;
+    private string? _status;
+    private string _background = "#301934";
+    private string _text = "#ffffff";
+    private long _paletteVersion;
+    private long _renderedPaletteVersion = -1;
+
+    private string PaletteStyle => $"--playing-background: {_background}; --playing-text: {_text};";
+
+    private string? ImageUrl =>
+        Uri.TryCreate(_track?.ImageUrl, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? uri.AbsoluteUri : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthenticationStateTask is null)
+        {
+            return;
+        }
+
+        var user = (await AuthenticationStateTask).User;
+        _authenticated = user.Identity?.IsAuthenticated == true;
+        _sessionId = user.FindFirst("nowify_session")?.Value;
+        _requiresLogin = _authenticated && string.IsNullOrWhiteSpace(_sessionId);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        // Start only after interactive rendering, not during server prerendering.
+        if (firstRender && _authenticated && !_requiresLogin)
+        {
+            _pollTask = PollAsync(_lifetime.Token);
+        }
+
+        if (_renderedPaletteVersion == _paletteVersion)
+        {
+            return;
+        }
+
+        var version = _paletteVersion;
+        var image = _imageFailed ? null : ImageUrl;
+        _renderedPaletteVersion = version;
+        if (image is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _moduleTask ??= JS.InvokeAsync<IJSObjectReference>("import", "./nowify.js").AsTask();
+            var module = await _moduleTask;
+            var palette = await module.InvokeAsync<AlbumPalette>("extractPalette", _lifetime.Token, image);
+            if (!_disposed && version == _paletteVersion)
+            {
+                _background = palette.Background;
+                _text = palette.Text;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (JSException) { }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var delay = TimeSpan.FromMilliseconds(2500);
+                try
+                {
+                    var result = await Player.GetNowPlayingAsync(_sessionId!, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _loading = false;
+                    if (result.RequiresLogin)
+                    {
+                        _requiresLogin = true;
+                        SetTrack(null);
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
+                    if (result.RetryAfter is { } retryAfter && retryAfter > delay)
+                    {
+                        delay = retryAfter;
+                    }
+
+                    if (result.Error is not null || result.RetryAfter is not null)
+                    {
+                        _status = result.RetryAfter is not null
+                            ? "Spotify is busy. Waiting before trying again."
+                            : "Unable to refresh playback. Retrying shortly.";
+                    }
+                    else
+                    {
+                        SetTrack(result.Track);
+                        _status = null;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception)
+                {
+                    _loading = false;
+                    _status = "Unable to refresh playback. Retrying shortly.";
+                }
+
+                await InvokeAsync(StateHasChanged);
+                // The next request starts after this one finishes: requests never overlap.
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private void SetTrack(NowPlayingTrack? track)
+    {
+        var oldImage = ImageUrl;
+        _track = track;
+        if (oldImage != ImageUrl)
+        {
+            _imageFailed = false;
+            ResetPalette();
+        }
+    }
+
+    private void OnImageError()
+    {
+        _imageFailed = true;
+        ResetPalette();
+    }
+
+    private void ResetPalette()
+    {
+        _paletteVersion++;
+        _background = "#301934";
+        _text = "#ffffff";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        await _lifetime.CancelAsync();
+        if (_pollTask is not null)
+        {
+            await _pollTask;
+        }
+
+        if (_moduleTask is not null)
+        {
+            try
+            {
+                var module = await _moduleTask;
+                await module.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+            catch (JSException) { }
+            catch (OperationCanceledException) { }
+        }
+
+        _lifetime.Dispose();
+    }
+
+    private sealed class AlbumPalette
+    {
+        public AlbumPalette() { }
+
+        public string Background { get; set; } = "#301934";
+        public string Text { get; set; } = "#ffffff";
+    }
+}
